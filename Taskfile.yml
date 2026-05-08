@@ -1,0 +1,47 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  TESTIMAGE_TAG: dcr.zekro.de/leuchtturm-testimage
+  TESTIMAGE_CONTAINER_NAME: leuchtturm-testimage
+
+tasks:
+  run:
+    desc: Run the leuchtturm executable
+    cmds:
+      - go run cmd/leuchtturm/main.go {{.CLI_ARGS}}
+
+  testimage:build:
+    desc: Build the testing Docker image
+    vars:
+      VERSION: '{{or .CLI_ARGS "latest"}}'
+    cmds:
+      - docker build testimage
+        --build-arg BUILD_VERSION={{.VERSION}}
+        --tag {{.TESTIMAGE_TAG}}:{{.VERSION}}
+        --no-cache
+
+  testimage:run:
+    desc: Run the testing Docker image
+    vars:
+      VERSION: '{{or .CLI_ARGS "latest"}}'
+    cmds:
+      - docker run
+        --detach
+        --rm
+        --name "{{.TESTIMAGE_CONTAINER_NAME}}"
+        --label leuchtturm.enable=true
+        {{.TESTIMAGE_TAG}}:{{.VERSION}}
+
+  testimage:stop:
+    desc: Stop the testing Docker image
+    cmds:
+      - docker stop "{{.TESTIMAGE_CONTAINER_NAME}}"
+
+  testimage:push:
+    desc: Push the testing Docker image
+    vars:
+      VERSION: '{{or .CLI_ARGS "latest"}}'
+    cmds:
+      - docker push {{.TESTIMAGE_TAG}}:{{.VERSION}}
