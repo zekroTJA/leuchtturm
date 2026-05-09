@@ -1,0 +1,10 @@
+services:
+  latest-notenabled:
+    image: dcr.zekro.de/leuchtturm-testimage:latest
+
+  latest-enabled:
+    image: dcr.zekro.de/leuchtturm-testimage:latest
+    labels:
+      leuchtturm.enable: true
+      leuchtturm.keep-old-image: false
+      leuchtturm.schedule: "* * * * *"

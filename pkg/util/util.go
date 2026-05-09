@@ -10,3 +10,11 @@ func IsTrue(value string) bool {
 		return false
 	}
 }
+
+func IsTruePtr(value string) *bool {
+	if value == "" {
+		return nil
+	}
+	result := IsTrue(value)
+	return &result
+}

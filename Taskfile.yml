@@ -9,6 +9,8 @@ vars:
 tasks:
   run:
     desc: Run the leuchtturm executable
+    env:
+      LT_LOGLEVEL: debug
     cmds:
       - go run cmd/leuchtturm/main.go {{.CLI_ARGS}}
 
