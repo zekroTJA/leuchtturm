@@ -1,0 +1,34 @@
+name: Test Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_version:
+        description: "Build version"
+        required: true
+        type: string
+        default: latest
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: dcr.zekro.de
+
+      - name: Build & Push
+        uses: docker/build-push-action@v5
+        with:
+          build-args: |
+            BUILD_VERSION=${{ inputs.build_version }}
+          context: ./testimage
+          push: true
+          tags: dcr.zekro.de/leuchtturm-testimage:${{ inputs.build_version }}
