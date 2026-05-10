@@ -36,6 +36,6 @@ func main() {
 
 	slog.Info("leuchtturm started", "took", time.Since(start))
 	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
 }

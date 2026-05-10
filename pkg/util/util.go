@@ -1,10 +1,12 @@
 package util
 
-import "strings"
+import (
+	"strings"
+)
 
 func IsTrue(value string) bool {
-	switch strings.ToLower(value) {
-	case "true", "1", "on", "enable":
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "on", "enable", "yes":
 		return true
 	default:
 		return false
@@ -17,4 +19,5 @@ func IsTruePtr(value string) *bool {
 	}
 	result := IsTrue(value)
 	return &result
+
 }

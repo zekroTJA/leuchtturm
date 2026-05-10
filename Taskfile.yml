@@ -12,7 +12,12 @@ tasks:
     env:
       LT_LOGLEVEL: debug
     cmds:
-      - go run cmd/leuchtturm/main.go {{.CLI_ARGS}}
+      - go run -v cmd/leuchtturm/main.go {{.CLI_ARGS}}
+
+  test:
+    desc: Run unti tests
+    cmds:
+      - go test -v -cover ./...
 
   testimage:build:
     desc: Build the testing Docker image
@@ -24,26 +29,18 @@ tasks:
         --tag {{.TESTIMAGE_TAG}}:{{.VERSION}}
         --no-cache
 
-  testimage:run:
-    desc: Run the testing Docker image
-    vars:
-      VERSION: '{{or .CLI_ARGS "latest"}}'
+  testimage:docker-compose:
+    desc: Run docker compose on the test image stack
+    aliases:
+      - dc
     cmds:
-      - docker run
-        --detach
-        --rm
-        --name "{{.TESTIMAGE_CONTAINER_NAME}}"
-        --label leuchtturm.enable=true
-        {{.TESTIMAGE_TAG}}:{{.VERSION}}
+      - docker compose -f testimage/docker-compose.yml {{.CLI_ARGS}}
 
-  testimage:stop:
+  testimage:up:
     desc: Stop the testing Docker image
+    aliases:
+      - up
     cmds:
-      - docker stop "{{.TESTIMAGE_CONTAINER_NAME}}"
-
-  testimage:push:
-    desc: Push the testing Docker image
-    vars:
-      VERSION: '{{or .CLI_ARGS "latest"}}'
-    cmds:
-      - docker push {{.TESTIMAGE_TAG}}:{{.VERSION}}
+      - task: testimage:docker-compose
+        vars:
+          CLI_ARGS: up -d {{.CLI_ARGS}}

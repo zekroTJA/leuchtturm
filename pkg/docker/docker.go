@@ -1,14 +1,16 @@
 package docker
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/robfig/cron/v3"
@@ -22,9 +24,12 @@ const (
 )
 
 type Controller struct {
+	mtx sync.Mutex
+
 	client        *client.Client
 	scheduler     *cron.Cron
 	ctxCancelFunc context.CancelCauseFunc
+	scheduledJobs map[string]cron.EntryID
 
 	defaultSchedule string
 	keepOldImage    bool
@@ -48,13 +53,13 @@ func New(schedule string, keepOldImage bool) (*Controller, error) {
 	scheduler := cron.New()
 	scheduler.Start()
 
-
 	ctx, cancel := context.WithCancelCause(context.Background())
 
 	t := &Controller{
 		client:          cl,
 		scheduler:       scheduler,
 		ctxCancelFunc:   cancel,
+		scheduledJobs:   make(map[string]cron.EntryID),
 		defaultSchedule: schedule,
 		keepOldImage:    keepOldImage,
 	}
@@ -75,16 +80,6 @@ func (t *Controller) Close() error {
 	return t.client.Close()
 }
 
-type Container struct {
-	*container.Summary
-	KeepOldImage *bool
-	Schedule     string
-}
-
-func (t *Container) String() string {
-	return t.ID
-}
-
 func (t *Controller) eventListener(ctx context.Context) {
 	res := t.client.Events(ctx, client.EventsListOptions{
 		Filters: client.Filters{
@@ -99,16 +94,38 @@ func (t *Controller) eventListener(ctx context.Context) {
 			},
 		},
 	})
+
 	for event := range res.Messages {
-		slog.Info("received event - rescheduling", "event.action", event.Action, "event.type", event.Type)
-		err := t.scheduleUpdates(ctx)
+		t.handleEvent(ctx, &event)
+	}
+}
+
+func (t *Controller) handleEvent(ctx context.Context, event *events.Message) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
+	switch event.Action {
+	case "stop", "die", "destroy":
+		slog.Info("unscheduling container", "container", event.Actor.ID, "action", event.Action)
+		if jobId, ok := t.scheduledJobs[event.Actor.ID]; ok {
+			t.scheduler.Remove(jobId)
+			delete(t.scheduledJobs, event.Actor.ID)
+		}
+	case "start":
+		slog.Info("scheduling container", "container", event.Actor.ID, "action", event.Action)
+		container := newContainer(event.Actor.ID, event.Actor.Attributes)
+		err := t.scheduleContainerUpdate(ctx, container)
 		if err != nil {
-			slog.Error("failed scheduling container update", "err", err)
+			slog.Error("failed scheduling container update", "container", container, "err", err)
+			return
 		}
 	}
 }
 
 func (t *Controller) scheduleUpdates(ctx context.Context) error {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
 	containers, err := t.getContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("failed listing containers: %w", err)
@@ -119,28 +136,24 @@ func (t *Controller) scheduleUpdates(ctx context.Context) error {
 		return nil
 	}
 
-	schedules := map[string][]*Container{}
 	for _, container := range containers {
-		if container.Schedule != "" {
-			schedules[container.Schedule] = append(schedules[container.Schedule], container)
-		} else {
-			schedules[t.defaultSchedule] = append(schedules[t.defaultSchedule], container)
-		}
+		err = errors.Join(err, t.scheduleContainerUpdate(ctx, container))
 	}
 
-	for _, entry := range t.scheduler.Entries() {
-		t.scheduler.Remove(entry.ID)
-	}
+	return err
+}
 
-	for schedule, containers := range schedules {
-		slog.Debug("scheduling container update", "schedule", schedule, "containers", containers)
-		_, err := t.scheduler.AddFunc(schedule, t.updateContainersJob(ctx, containers))
-		if err != nil {
-			slog.Error("failed scheduling container update", "schedule", schedule, "containers", containers, "err", err)
-			err = errors.Join(err, fmt.Errorf("failed scheduling container update: %w", err))
-		}
+func (t *Controller) scheduleContainerUpdate(ctx context.Context, container *Container) error {
+	schedule := cmp.Or(container.Schedule, t.defaultSchedule)
+	jobId, err := t.scheduler.AddFunc(schedule, t.updateContainerJob(ctx, container))
+	if err != nil {
+		slog.Error("failed scheduling container update", "schedule", schedule, "container", container, "err", err)
+		return fmt.Errorf("failed scheduling container update: %w", err)
 	}
-
+	if oldJobId, ok := t.scheduledJobs[container.ID]; ok {
+		t.scheduler.Remove(oldJobId)
+	}
+	t.scheduledJobs[container.ID] = jobId
 	return err
 }
 
@@ -160,11 +173,7 @@ func (t *Controller) getContainers(ctx context.Context) ([]*Container, error) {
 		if !util.IsTrue(item.Labels[labelKeyEnable]) {
 			continue
 		}
-		results = append(results, &Container{
-			Summary:      &item,
-			KeepOldImage: util.IsTruePtr(item.Labels[labelKeyKeepOldImage]),
-			Schedule:     item.Labels[labelKeySchedule],
-		})
+		results = append(results, newContainer(item.ID, item.Labels))
 	}
 
 	return results, nil
@@ -176,7 +185,7 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 		return err
 	}
 
-	image := container.Image
+	image := containerInspect.Container.Image
 	if strings.HasPrefix(image, "sha256:") {
 		image = containerInspect.Container.Config.Image
 	}
@@ -254,9 +263,7 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 
 	if !keepOldImage {
 		slog.Debug("removing old image", "container", createResp.ID, "old-image", oldImgID)
-		_, err = t.client.ImageRemove(ctx, oldImgID, client.ImageRemoveOptions{
-			PruneChildren: true,
-		})
+		_, err = t.client.ImageRemove(ctx, oldImgID, client.ImageRemoveOptions{})
 		if err != nil {
 			return err
 		}
@@ -265,13 +272,11 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 	return nil
 }
 
-func (t *Controller) updateContainersJob(ctx context.Context, containers []*Container) func() {
+func (t *Controller) updateContainerJob(ctx context.Context, container *Container) func() {
 	return func() {
-		for _, container := range containers {
-			err := t.updateContainer(ctx, container)
-			if err != nil {
-				slog.Error("failed to update container", "container", container.ID, "error", err)
-			}
+		err := t.updateContainer(ctx, container)
+		if err != nil {
+			slog.Error("failed to update container", "container", container.ID, "error", err)
 		}
 	}
 }
