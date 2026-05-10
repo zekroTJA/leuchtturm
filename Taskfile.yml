@@ -10,7 +10,7 @@ tasks:
   run:
     desc: Run the leuchtturm executable
     env:
-      LT_LOGLEVEL: debug
+      LT_LOG_LEVEL: debug
     cmds:
       - go run -v cmd/leuchtturm/main.go {{.CLI_ARGS}}
 

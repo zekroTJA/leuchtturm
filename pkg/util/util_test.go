@@ -42,6 +42,8 @@ func TestIsTrue(t *testing.T) {
 func TestIsTruePtr(t *testing.T) {
 	t.Run("empty string returns nil", func(t *testing.T) {
 		assert.Nil(t, IsTruePtr(""))
+		assert.Nil(t, IsTruePtr("  "))
+		assert.Nil(t, IsTruePtr("\r\t"))
 	})
 
 	t.Run("truthy values return pointer to true", func(t *testing.T) {

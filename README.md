@@ -21,7 +21,7 @@ services:
     container_name: leuchtturm
     restart: unless-stopped
     environment:
-      LT_LOGLEVEL: info
+      LT_LOG_LEVEL: info
       LT_SCHEDULE: "0 4 * * *"
       LT_KEEP_OLD_IMAGE: "false"
     volumes:
@@ -48,20 +48,20 @@ services:
 
 leuchtturm is configured via command-line flags or environment variables.
 
-| Flag                | Environment           | Default       | Description                                                                                |
-| ------------------- | --------------------- | ------------- | ------------------------------------------------------------------------------------------ |
-| `--log-level`       | `LT_LOGLEVEL`         | `info`        | Log level (`debug`, `info`, `warn`, `error`).                                              |
-| `--schedule`        | `LT_SCHEDULE`         | `2 12 * * *`  | Default cron schedule used for all enabled containers.                                     |
-| `--keep-old-image`  | `LT_KEEP_OLD_IMAGE`   | `false`       | Keep old images on disk after a successful update instead of removing them.                |
+| Flag               | Environment         | Default      | Description                                                                 |
+| ------------------ | ------------------- | ------------ | --------------------------------------------------------------------------- |
+| `--log-level`      | `LT_LOG_LEVEL`      | `info`       | Log level (`debug`, `info`, `warn`, `error`).                               |
+| `--schedule`       | `LT_SCHEDULE`       | `2 12 * * *` | Default cron schedule used for all enabled containers.                      |
+| `--keep-old-image` | `LT_KEEP_OLD_IMAGE` | `false`      | Keep old images on disk after a successful update instead of removing them. |
 
 ### Container labels
 
 Set these labels on the containers you want leuchtturm to manage.
 
-| Label                          | Required | Description                                                                              |
-| ------------------------------ | -------- | ---------------------------------------------------------------------------------------- |
-| `leuchtturm.enable`            | yes      | Set to `true` to opt the container into automatic updates.                               |
-| `leuchtturm.schedule`          | no       | Per-container cron schedule. Overrides `LT_SCHEDULE`.                                    |
-| `leuchtturm.keep-old-image`    | no       | Per-container override for `LT_KEEP_OLD_IMAGE` (`true` to keep, `false` to prune).       |
+| Label                       | Required | Description                                                                        |
+| --------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| `leuchtturm.enable`         | yes      | Set to `true` to opt the container into automatic updates.                         |
+| `leuchtturm.schedule`       | no       | Per-container cron schedule. Overrides `LT_SCHEDULE`.                              |
+| `leuchtturm.keep-old-image` | no       | Per-container override for `LT_KEEP_OLD_IMAGE` (`true` to keep, `false` to prune). |
 
 When the schedule fires, leuchtturm pulls the image referenced by the running container. If the pulled image differs from the running one, the container is stopped, removed, and re-created from the new image while preserving its previous configuration, networks, and name.

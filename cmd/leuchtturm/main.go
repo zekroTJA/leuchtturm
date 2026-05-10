@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -11,10 +13,29 @@ import (
 	"github.com/zekrotja/leuchtturm/pkg/docker"
 )
 
+type LogFormat string
+
+const (
+	LogFormatText = LogFormat("text")
+	LogFormatJson = LogFormat("json")
+)
+
 type Args struct {
-	LogLevel     slog.Level `arg:"--log-level,env:LT_LOGLEVEL" default:"info" help:"Log level"`
+	LogLevel     slog.Level `arg:"--log-level,env:LT_LOG_LEVEL" default:"info" help:"Log level"`
+	LogFormat    LogFormat  `arg:"--log-format,env:LT_LOG_FORMAT" default:"text" help:"Log format (text or json)"`
 	KeepOldImage bool       `arg:"--keep-old-image,env:LT_KEEP_OLD_IMAGE" help:"Keep old images after update; override with label leuchtturm.keep-old-imag"`
 	Schedule     string     `arg:"--schedule,env:LT_SCHEDULE" default:"2 12 * * *" help:"Cron schedule for updates; overrride with label leuchtturm.schedule"`
+}
+
+func getLogHandlerCreator(format LogFormat) (func(w io.Writer, opts *slog.HandlerOptions) slog.Handler, error) {
+	switch format {
+	case LogFormatJson:
+		return func(w io.Writer, opts *slog.HandlerOptions) slog.Handler { return slog.NewJSONHandler(w, opts) }, nil
+	case LogFormatText:
+		return func(w io.Writer, opts *slog.HandlerOptions) slog.Handler { return slog.NewTextHandler(w, opts) }, nil
+	default:
+		return nil, errors.New("invalid log format")
+	}
 }
 
 func main() {
@@ -23,7 +44,13 @@ func main() {
 	var args Args
 	arg.MustParse(&args)
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	logHandlerCreator, err := getLogHandlerCreator(args.LogFormat)
+	if err != nil {
+		slog.Error("failed initializing logger", "err", err)
+		os.Exit(1)
+	}
+
+	slog.SetDefault(slog.New(logHandlerCreator(os.Stderr, &slog.HandlerOptions{
 		Level: args.LogLevel,
 	})))
 
@@ -38,4 +65,6 @@ func main() {
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
+
+	slog.Info("shutting down ...")
 }
