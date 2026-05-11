@@ -2,6 +2,9 @@
 
 A lightweight Docker container update agent that watches labeled containers and automatically pulls and re-creates them on a cron schedule when a newer image is available.
 
+> [!NOTE]  
+> This project is very much inspired by [watchtower](https://github.com/containrrr/watchtower), which was archived on the 17th of December 2025 and a lot of the forks are ["full of AI slop"](https://github.com/containrrr/watchtower/discussions/2135). So I thought I take the core functionality of the original project and build my own service for that. Though I also use AI for coding assistance, all committed and deployed code is reviewed by me and holds up to the standarts of code I would write myself by hand.
+
 ## Usage
 
 The Docker image is published to GitHub Container Registry and can be pulled from:
