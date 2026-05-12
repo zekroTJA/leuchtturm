@@ -222,11 +222,7 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 		return err
 	}
 
-	image := containerInspect.Container.Image
-	if strings.HasPrefix(image, "sha256:") {
-		image = containerInspect.Container.Config.Image
-	}
-
+	image := containerInspect.Container.Config.Image
 	if strings.HasPrefix(image, "sha256:") {
 		slog.Warn("skipping container with image hash", "container", container.ID, "image", image)
 		return nil
@@ -260,9 +256,12 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 
 	oldContainerName := strings.TrimPrefix(containerInspect.Container.Name, "/")
 	slog.Debug("renaming old container", "container", container.ID, "oldName", oldContainerName)
-	_, _ = t.client.ContainerRename(ctx, container.ID, client.ContainerRenameOptions{
+	_, err = t.client.ContainerRename(ctx, container.ID, client.ContainerRenameOptions{
 		NewName: oldContainerName + "_old",
 	})
+	if err != nil {
+		slog.Warn("failed renaming old container", "container", container.ID, "err", err)
+	}
 
 	slog.Debug("stopping container", "container", container.ID)
 	_, err = t.client.ContainerStop(ctx, container.ID, client.ContainerStopOptions{})
@@ -271,7 +270,10 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 	}
 
 	slog.Debug("removing container", "container", container.ID)
-	_, _ = t.client.ContainerRemove(ctx, container.ID, client.ContainerRemoveOptions{Force: true})
+	_, err = t.client.ContainerRemove(ctx, container.ID, client.ContainerRemoveOptions{Force: true})
+	if err != nil {
+		return err
+	}
 
 	slog.Debug("re-creating container", "container", container.ID)
 	createResp, err := t.client.ContainerCreate(ctx, client.ContainerCreateOptions{

@@ -9,12 +9,13 @@ import (
 //   - "1"
 //   - "on"
 //   - "enabled"
+//   - "enable"
 //   - "yes"
 //
 // Otherwise, false is returned.
 func IsTrue(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "true", "1", "on", "enable", "yes":
+	case "true", "1", "on", "enable", "enabled", "yes":
 		return true
 	default:
 		return false
