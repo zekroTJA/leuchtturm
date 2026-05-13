@@ -13,7 +13,7 @@ The Docker image is published to GitHub Container Registry and can be pulled fro
 ghcr.io/zekrotja/leuchtturm
 ```
 
-leuchtturm needs access to the Docker daemon socket to inspect, pull, and re-create containers. It only acts on containers that carry the `leuchtturm.enable=true` label, so other containers on the host are left alone.
+leuchtturm needs access to the Docker daemon socket to inspect, pull, and re-create containers. It only acts on containers that carry the `leuchtturm.enable=true` label, so other containers on the host are unaffected.
 
 ### Docker Compose example
 
@@ -25,6 +25,7 @@ services:
     restart: unless-stopped
     environment:
       LT_LOG_LEVEL: info
+      LT_LOG_FORMAT: text
       LT_SCHEDULE: "0 4 * * *"
       LT_KEEP_OLD_IMAGE: "false"
     volumes:
@@ -54,6 +55,7 @@ leuchtturm is configured via command-line flags or environment variables.
 | Flag               | Environment         | Default      | Description                                                                 |
 | ------------------ | ------------------- | ------------ | --------------------------------------------------------------------------- |
 | `--log-level`      | `LT_LOG_LEVEL`      | `info`       | Log level (`debug`, `info`, `warn`, `error`).                               |
+| `--log-format`     | `LT_LOG_FORMAT`     | `text`       | Log format (`text`, `json`).                                                |
 | `--schedule`       | `LT_SCHEDULE`       | `2 12 * * *` | Default cron schedule used for all enabled containers.                      |
 | `--keep-old-image` | `LT_KEEP_OLD_IMAGE` | `false`      | Keep old images on disk after a successful update instead of removing them. |
 
