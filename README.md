@@ -13,7 +13,7 @@ The Docker image is published to GitHub Container Registry and can be pulled fro
 ghcr.io/zekrotja/leuchtturm
 ```
 
-leuchtturm needs access to the Docker daemon socket to inspect, pull, and re-create containers. It only acts on containers that carry the `leuchtturm.enable=true` label, so other containers on the host are unaffected.
+leuchtturm needs access to the Docker daemon socket to inspect, pull, and re-create containers. It only acts on containers that are **running** and carry the **`leuchtturm.enable=true` label**, so other containers on the host are unaffected.
 
 ### Docker Compose example
 
