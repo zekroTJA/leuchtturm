@@ -21,10 +21,11 @@ const (
 )
 
 type Args struct {
-	LogLevel     slog.Level `arg:"--log-level,env:LT_LOG_LEVEL" default:"info" help:"Log level"`
-	LogFormat    LogFormat  `arg:"--log-format,env:LT_LOG_FORMAT" default:"text" help:"Log format (text or json)"`
-	KeepOldImage bool       `arg:"--keep-old-image,env:LT_KEEP_OLD_IMAGE" help:"Keep old images after update; override with label leuchtturm.keep-old-image"`
-	Schedule     string     `arg:"--schedule,env:LT_SCHEDULE" default:"2 12 * * *" help:"Cron schedule for updates; overrride with label leuchtturm.schedule"`
+	LogLevel      slog.Level `arg:"--log-level,env:LT_LOG_LEVEL" default:"info" help:"Log level"`
+	LogFormat     LogFormat  `arg:"--log-format,env:LT_LOG_FORMAT" default:"text" help:"Log format (text or json)"`
+	Schedule      string     `arg:"--schedule,env:LT_SCHEDULE" default:"2 12 * * *" help:"Cron schedule for updates; overrride with label leuchtturm.schedule"`
+	KeepOldImage  bool       `arg:"--keep-old-image,env:LT_KEEP_OLD_IMAGE" help:"Keep old images after update; override with label leuchtturm.keep-old-image"`
+	RemoveVolumes bool       `arg:"--remove-volumes,env:LT_REMOVE_VOLUMES" help:"Remove anonymous volumes on container removal; override with label leuchtturm.remove-volumes"`
 }
 
 type LogHandlerCreator func(w io.Writer, opts *slog.HandlerOptions) slog.Handler
@@ -56,7 +57,7 @@ func main() {
 		Level: args.LogLevel,
 	})))
 
-	dc, err := docker.New(args.Schedule, args.KeepOldImage)
+	dc, err := docker.New(args.Schedule, args.KeepOldImage, args.RemoveVolumes)
 	if err != nil {
 		slog.Error("docker controller initialization failed", "err", err)
 		os.Exit(1)

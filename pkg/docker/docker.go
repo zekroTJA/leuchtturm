@@ -18,9 +18,7 @@ import (
 )
 
 const (
-	labelKeyEnable       = "leuchtturm.enable"
-	labelKeyKeepOldImage = "leuchtturm.keep-old-image"
-	labelKeySchedule     = "leuchtturm.schedule"
+	labelKeyEnable = "leuchtturm.enable"
 )
 
 // Controller manages the scheduling of container updates using Docker events and cron jobs.
@@ -35,13 +33,14 @@ type Controller struct {
 
 	defaultSchedule string
 	keepOldImage    bool
+	removeVolumes   bool
 }
 
 // New creates a new Controller instance with the given schedule and keepOldImage as default settings.
 // The connection to the Docker daemon is established and tested with a ping. The Cron scheduler is
 // created and started. All enabled containers are listed and scheduled for updates and the Docker
 // event listener loop is started in a separate go-routine which is canceled on calling Close.
-func New(schedule string, keepOldImage bool) (*Controller, error) {
+func New(schedule string, keepOldImage bool, removeVolumes bool) (*Controller, error) {
 	cl, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, err
@@ -68,6 +67,7 @@ func New(schedule string, keepOldImage bool) (*Controller, error) {
 		scheduledJobs:   make(map[string]cron.EntryID),
 		defaultSchedule: schedule,
 		keepOldImage:    keepOldImage,
+		removeVolumes:   removeVolumes,
 	}
 
 	err = t.scheduleUpdates(ctx)
@@ -270,7 +270,10 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 	}
 
 	slog.Debug("removing container", "container", container.ID)
-	_, err = t.client.ContainerRemove(ctx, container.ID, client.ContainerRemoveOptions{Force: true})
+	_, err = t.client.ContainerRemove(ctx, container.ID, client.ContainerRemoveOptions{
+		Force:         true,
+		RemoveVolumes: util.OrPtr(container.RemoveVolumes, t.removeVolumes),
+	})
 	if err != nil {
 		return err
 	}
@@ -294,13 +297,8 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 		return err
 	}
 
-	keepOldImage := t.keepOldImage
-	if container.KeepOldImage != nil {
-		// container label overrides global config
-		keepOldImage = *container.KeepOldImage
-	}
-
-	if !keepOldImage {
+	keepOldImage := util.OrPtr(container.KeepOldImage, t.keepOldImage)
+	if keepOldImage {
 		slog.Debug("removing old image", "container", createResp.ID, "old-image", oldImgID)
 		_, err = t.client.ImageRemove(ctx, oldImgID, client.ImageRemoveOptions{})
 		if err != nil {

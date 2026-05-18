@@ -30,3 +30,10 @@ func IsTruePtr(value string) *bool {
 	result := IsTrue(value)
 	return &result
 }
+
+func OrPtr[T any](v *T, def T) T {
+	if v != nil {
+		return *v
+	}
+	return def
+}

@@ -44,3 +44,12 @@ tasks:
       - task: testimage:docker-compose
         vars:
           CLI_ARGS: up -d {{.CLI_ARGS}}
+
+  testimage:down:
+    desc: Stop the testing Docker image
+    aliases:
+      - down
+    cmds:
+      - task: testimage:docker-compose
+        vars:
+          CLI_ARGS: down {{.CLI_ARGS}}

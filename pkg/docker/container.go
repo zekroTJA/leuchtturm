@@ -4,17 +4,25 @@ import (
 	"github.com/zekrotja/leuchtturm/pkg/util"
 )
 
+const (
+	labelKeyKeepOldImage  = "leuchtturm.keep-old-image"
+	labelKeySchedule      = "leuchtturm.schedule"
+	labelKeyRemoveVolumes = "leuchtturm.remove-volumes"
+)
+
 type Container struct {
-	ID           string
-	KeepOldImage *bool
-	Schedule     string
+	ID            string
+	Schedule      string
+	KeepOldImage  *bool
+	RemoveVolumes *bool
 }
 
 func newContainer(id string, labels map[string]string) *Container {
 	return &Container{
-		ID:           id,
-		KeepOldImage: util.IsTruePtr(labels[labelKeyKeepOldImage]),
-		Schedule:     labels[labelKeySchedule],
+		ID:            id,
+		Schedule:      labels[labelKeySchedule],
+		KeepOldImage:  util.IsTruePtr(labels[labelKeyKeepOldImage]),
+		RemoveVolumes: util.IsTruePtr(labels[labelKeyRemoveVolumes]),
 	}
 }
 
