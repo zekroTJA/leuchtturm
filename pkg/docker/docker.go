@@ -234,7 +234,15 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 		oldImgID = imgInspect.ID
 	}
 
-	pullResp, err := t.client.ImagePull(ctx, image, client.ImagePullOptions{})
+	registryAuth, err := resolveRegistryAuth(ctx, image)
+	if err != nil {
+		slog.Warn("failed resolving registry auth, falling back to anonymous pull",
+			"container", container.ID, "image", image, "err", err)
+	}
+
+	pullResp, err := t.client.ImagePull(ctx, image, client.ImagePullOptions{
+		RegistryAuth: registryAuth,
+	})
 	if err != nil {
 		return err
 	}

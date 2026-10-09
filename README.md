@@ -73,3 +73,27 @@ Set these labels on the containers you want leuchtturm to manage.
 | `leuchtturm.remove-volumes` | no       | Per-container override for `LT_REMOVE_VOLUMES` (`true` to remove, `false` to keep). |
 
 When the schedule fires, leuchtturm pulls the image referenced by the running container. If the pulled image differs from the running one, the container is stopped, removed, and re-created from the new image while preserving its previous configuration, networks, and name.
+
+### Private registries
+
+leuchtturm authenticates against private registries using the standard Docker CLI configuration (`config.json`). Log in once on the host (or wherever the config is generated) with:
+
+```sh
+docker login registry.example.com
+```
+
+On pull, leuchtturm resolves credentials for the image's registry from this configuration, supporting both statically stored credentials (`auths`) and credential stores/helpers (`credsStore`/`credHelpers`). Images without configured credentials are pulled anonymously as before.
+
+The configuration is read from `$DOCKER_CONFIG/config.json` if `DOCKER_CONFIG` is set, otherwise from `~/.docker/config.json`. When running leuchtturm as a container, mount this configuration into it, for example:
+
+```yaml
+services:
+  leuchtturm:
+    image: ghcr.io/zekrotja/leuchtturm:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.docker/config.json:/root/.docker/config.json:ro
+```
+
+> [!NOTE]
+> When using credential stores or helpers (`credsStore`/`credHelpers`), the corresponding `docker-credential-*` helper binary must be available on `PATH` inside the leuchtturm container.
