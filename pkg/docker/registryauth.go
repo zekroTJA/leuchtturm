@@ -76,7 +76,8 @@ func resolveRegistryAuth(ctx context.Context, image string) (encodedAuth string,
 }
 
 // registryFromImage extracts the registry server address from an image reference. If the reference
-// does not contain an explicit registry, the Docker Hub registry address is returned.
+// does not contain an explicit registry or references one of the Docker Hub registry aliases, the
+// Docker Hub registry address is returned.
 func registryFromImage(image string) string {
 	slashIdx := strings.IndexRune(image, '/')
 	if slashIdx == -1 {
@@ -85,6 +86,11 @@ func registryFromImage(image string) string {
 
 	host := image[:slashIdx]
 	if host != "localhost" && !strings.ContainsAny(host, ".:") {
+		return dockerHubRegistry
+	}
+
+	switch host {
+	case "docker.io", "index.docker.io", "registry-1.docker.io":
 		return dockerHubRegistry
 	}
 

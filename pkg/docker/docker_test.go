@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -364,6 +365,50 @@ func TestScheduleUpdates(t *testing.T) {
 		assert.Contains(t, controller.scheduledJobs, "c2")
 	})
 
+	t.Run("removes jobs of containers which are no longer running", func(t *testing.T) {
+		daemon := newFakeDaemon(t)
+		daemon.handleJSON(http.MethodGet, "/containers/json", http.StatusOK, []map[string]any{
+			{"Id": "c2", "Labels": map[string]string{labelKeyEnable: "true"}},
+		})
+		controller := daemon.newController(t, "@daily")
+		require.NoError(t, controller.scheduleContainerUpdate(context.Background(), &Container{ID: "c1"}))
+		staleJobId := controller.scheduledJobs["c1"]
+
+		err := controller.scheduleUpdates(context.Background())
+
+		require.NoError(t, err)
+		assert.NotContains(t, controller.scheduledJobs, "c1")
+		assert.Contains(t, controller.scheduledJobs, "c2")
+		assert.False(t, controller.scheduler.Entry(staleJobId).Valid())
+		assert.Len(t, controller.scheduler.Entries(), 1)
+	})
+
+	t.Run("removes all jobs when no containers are running", func(t *testing.T) {
+		daemon := newFakeDaemon(t)
+		daemon.handleJSON(http.MethodGet, "/containers/json", http.StatusOK, []any{})
+		controller := daemon.newController(t, "@daily")
+		require.NoError(t, controller.scheduleContainerUpdate(context.Background(), &Container{ID: "c1"}))
+
+		err := controller.scheduleUpdates(context.Background())
+
+		require.NoError(t, err)
+		assert.Empty(t, controller.scheduledJobs)
+		assert.Empty(t, controller.scheduler.Entries())
+	})
+
+	t.Run("listing error keeps existing jobs", func(t *testing.T) {
+		daemon := newFakeDaemon(t)
+		daemon.handleJSON(http.MethodGet, "/containers/json", http.StatusInternalServerError,
+			map[string]string{"message": "daemon unavailable"})
+		controller := daemon.newController(t, "@daily")
+		require.NoError(t, controller.scheduleContainerUpdate(context.Background(), &Container{ID: "c1"}))
+
+		err := controller.scheduleUpdates(context.Background())
+
+		assert.Error(t, err)
+		assert.Contains(t, controller.scheduledJobs, "c1")
+	})
+
 	t.Run("listing error is wrapped", func(t *testing.T) {
 		daemon := newFakeDaemon(t)
 		daemon.handleJSON(http.MethodGet, "/containers/json", http.StatusInternalServerError,
@@ -419,6 +464,78 @@ func TestEventListener(t *testing.T) {
 	require.Len(t, filters, 1)
 	for _, expected := range []string{labelKeyEnable, "container", "start", "stop", "die", "destroy"} {
 		assert.Contains(t, filters[0], expected)
+	}
+}
+
+func TestEventListenerReconnects(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	var connectionCount atomic.Int32
+	daemon.handle(http.MethodGet, "/events", func(w http.ResponseWriter, r *http.Request) {
+		connection := connectionCount.Add(1)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		if connection == 1 {
+			_ = json.NewEncoder(w).Encode(events.Message{
+				Type:   events.ContainerEventType,
+				Action: events.ActionStart,
+				Actor:  events.Actor{ID: "c1", Attributes: map[string]string{labelKeyEnable: "true"}},
+			})
+			return
+		}
+		// Keep subsequent connections open until the client disconnects.
+		<-r.Context().Done()
+	})
+	// While disconnected, c1 went away and c2 was started.
+	daemon.handleJSON(http.MethodGet, "/containers/json", http.StatusOK, []map[string]any{
+		{"Id": "c2", "Labels": map[string]string{labelKeyEnable: "true"}},
+	})
+	controller := daemon.newController(t, "@daily")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	listenerDone := make(chan struct{})
+	go func() {
+		defer close(listenerDone)
+		controller.eventListener(ctx)
+	}()
+
+	assert.Eventually(t, func() bool {
+		controller.mtx.Lock()
+		defer controller.mtx.Unlock()
+		_, hasFirst := controller.scheduledJobs["c1"]
+		_, hasSecond := controller.scheduledJobs["c2"]
+		return connectionCount.Load() >= 2 && !hasFirst && hasSecond
+	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel()
+	select {
+	case <-listenerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event listener did not exit after context cancellation")
+	}
+}
+
+func TestEventListenerExitsOnCancelDuringReconnectDelay(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	controller := daemon.newController(t, "@daily")
+	controller.eventReconnectDelay = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+	listenerDone := make(chan struct{})
+	go func() {
+		defer close(listenerDone)
+		controller.eventListener(ctx)
+	}()
+
+	assert.Eventually(t, func() bool {
+		_, requested := daemon.findRequest(http.MethodGet, "/events")
+		return requested
+	}, 2*time.Second, 10*time.Millisecond)
+
+	cancel()
+	select {
+	case <-listenerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event listener did not exit after context cancellation")
 	}
 }
 

@@ -19,6 +19,8 @@ import (
 
 const (
 	labelKeyEnable = "leuchtturm.enable"
+
+	defaultEventReconnectDelay = 5 * time.Second
 )
 
 // Controller manages the scheduling of container updates using Docker events and cron jobs.
@@ -31,9 +33,10 @@ type Controller struct {
 	ctxCancelFunc context.CancelCauseFunc
 	scheduledJobs map[string]cron.EntryID
 
-	defaultSchedule string
-	keepOldImage    bool
-	removeVolumes   bool
+	eventReconnectDelay time.Duration
+	defaultSchedule     string
+	keepOldImage        bool
+	removeVolumes       bool
 }
 
 // New creates a new Controller instance with the given schedule and keepOldImage as default settings.
@@ -61,13 +64,14 @@ func New(schedule string, keepOldImage bool, removeVolumes bool) (*Controller, e
 	ctx, cancel := context.WithCancelCause(context.Background())
 
 	t := &Controller{
-		client:          cl,
-		scheduler:       scheduler,
-		ctxCancelFunc:   cancel,
-		scheduledJobs:   make(map[string]cron.EntryID),
-		defaultSchedule: schedule,
-		keepOldImage:    keepOldImage,
-		removeVolumes:   removeVolumes,
+		client:              cl,
+		scheduler:           scheduler,
+		ctxCancelFunc:       cancel,
+		scheduledJobs:       make(map[string]cron.EntryID),
+		eventReconnectDelay: defaultEventReconnectDelay,
+		defaultSchedule:     schedule,
+		keepOldImage:        keepOldImage,
+		removeVolumes:       removeVolumes,
 	}
 
 	err = t.scheduleUpdates(ctx)
@@ -91,8 +95,34 @@ func (t *Controller) Close() error {
 
 // eventListener creates a loop listening to container lifecycle events from the Docker engine. When a container
 // is stopped, dies or is destroyed, the coresponding schedule is removed. When a new container is started, the
-// container is scheduled for updates.
+// container is scheduled for updates. When the event stream is interrupted (e.g. on a Docker daemon restart), the
+// listener reconnects after eventReconnectDelay and re-synchronizes the scheduled updates with the running
+// containers to catch up on missed events. The loop exits when the given context is canceled.
 func (t *Controller) eventListener(ctx context.Context) {
+	for {
+		err := t.listenEvents(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+
+		slog.Error("docker event stream interrupted, reconnecting", "err", err, "delay", t.eventReconnectDelay)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(t.eventReconnectDelay):
+		}
+
+		err = t.scheduleUpdates(ctx)
+		if err != nil {
+			slog.Error("failed re-synchronizing container updates", "err", err)
+		}
+	}
+}
+
+// listenEvents subscribes to container lifecycle events and passes them to handleEvent until the event stream
+// ends or fails. The error terminating the stream is returned.
+func (t *Controller) listenEvents(ctx context.Context) error {
 	res := t.client.Events(ctx, client.EventsListOptions{
 		Filters: client.Filters{
 			"type":  {"container": true},
@@ -106,14 +136,13 @@ func (t *Controller) eventListener(ctx context.Context) {
 		},
 	})
 
-	go func() {
-		for err := range res.Err {
-			slog.Error("error receiving docker event", "err", err)
+	for {
+		select {
+		case event := <-res.Messages:
+			t.handleEvent(ctx, &event)
+		case err := <-res.Err:
+			return err
 		}
-	}()
-
-	for event := range res.Messages {
-		t.handleEvent(ctx, &event)
 	}
 }
 
@@ -131,6 +160,10 @@ func (t *Controller) handleEvent(ctx context.Context, event *events.Message) {
 			delete(t.scheduledJobs, event.Actor.ID)
 		}
 	case "start":
+		if !util.IsTrue(event.Actor.Attributes[labelKeyEnable]) {
+			slog.Debug("ignoring start of container not enabled for updates", "container", event.Actor.ID)
+			return
+		}
 		slog.Info("scheduling container", "container", event.Actor.ID, "action", event.Action)
 		container := newContainer(event.Actor.ID, event.Actor.Attributes)
 		err := t.scheduleContainerUpdate(ctx, container)
@@ -141,7 +174,8 @@ func (t *Controller) handleEvent(ctx context.Context, event *events.Message) {
 	}
 }
 
-// scheduleUpdate takes the list of labeled and started containers and schedules them using scheduleContainerUpdate.
+// scheduleUpdates takes the list of labeled and started containers and schedules them using
+// scheduleContainerUpdate. Scheduled jobs of containers which are no longer running or enabled are removed.
 func (t *Controller) scheduleUpdates(ctx context.Context) error {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
@@ -149,6 +183,18 @@ func (t *Controller) scheduleUpdates(ctx context.Context) error {
 	containers, err := t.getContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("failed listing containers: %w", err)
+	}
+
+	runningContainerIDs := make(map[string]struct{}, len(containers))
+	for _, container := range containers {
+		runningContainerIDs[container.ID] = struct{}{}
+	}
+	for containerID, jobId := range t.scheduledJobs {
+		if _, ok := runningContainerIDs[containerID]; !ok {
+			slog.Info("unscheduling container which is no longer running", "container", containerID)
+			t.scheduler.Remove(jobId)
+			delete(t.scheduledJobs, containerID)
+		}
 	}
 
 	if len(containers) == 0 {
@@ -246,7 +292,7 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 	if err != nil {
 		return err
 	}
-	if err = pullResp.Wait(ctx); err != nil {
+	if err = waitForPull(ctx, pullResp); err != nil {
 		return err
 	}
 
@@ -306,7 +352,7 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 	}
 
 	keepOldImage := util.OrPtr(container.KeepOldImage, t.keepOldImage)
-	if keepOldImage {
+	if !keepOldImage && oldImgID != "" {
 		slog.Debug("removing old image", "container", createResp.ID, "old-image", oldImgID)
 		_, err = t.client.ImageRemove(ctx, oldImgID, client.ImageRemoveOptions{})
 		if err != nil {
@@ -314,6 +360,20 @@ func (t *Controller) updateContainer(ctx context.Context, container *Container) 
 		}
 	}
 
+	return nil
+}
+
+// waitForPull consumes the image pull progress stream until the pull has finished. In contrast to
+// ImagePullResponse.Wait, errors reported by the daemon within the progress stream are returned as well.
+func waitForPull(ctx context.Context, pullResp client.ImagePullResponse) error {
+	for message, err := range pullResp.JSONMessages(ctx) {
+		if err != nil {
+			return err
+		}
+		if message.Error != nil {
+			return fmt.Errorf("image pull failed: %w", message.Error)
+		}
+	}
 	return nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/client"
 	"github.com/robfig/cron/v3"
@@ -120,10 +121,11 @@ func (t *fakeDaemon) newController(tb testing.TB, defaultSchedule string) *Contr
 	tb.Helper()
 
 	return &Controller{
-		client:          t.newClient(tb),
-		scheduler:       cron.New(),
-		scheduledJobs:   make(map[string]cron.EntryID),
-		defaultSchedule: defaultSchedule,
+		client:              t.newClient(tb),
+		scheduler:           cron.New(),
+		scheduledJobs:       make(map[string]cron.EntryID),
+		eventReconnectDelay: 10 * time.Millisecond,
+		defaultSchedule:     defaultSchedule,
 	}
 }
 

@@ -181,10 +181,10 @@ func TestUpdateContainer(t *testing.T) {
 		assert.False(t, stopped)
 	})
 
-	t.Run("pull stream error with unchanged image does not recreate container", func(t *testing.T) {
+	t.Run("returns error when pull stream reports an error", func(t *testing.T) {
 		daemon, controller := setupUpdateScenario(t, updateScenario{
 			oldImageID: testOldImageID,
-			newImageID: testOldImageID,
+			newImageID: testNewImageID,
 		})
 		daemon.handle(http.MethodPost, "/images/create", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -192,8 +192,9 @@ func TestUpdateContainer(t *testing.T) {
 			_, _ = w.Write([]byte(`{"errorDetail":{"message":"manifest unknown"},"error":"manifest unknown"}` + "\n"))
 		})
 
-		_ = controller.updateContainer(context.Background(), &Container{ID: testContainerID})
+		err := controller.updateContainer(context.Background(), &Container{ID: testContainerID})
 
+		assert.ErrorContains(t, err, "manifest unknown")
 		_, stopped := daemon.findRequest(http.MethodPost, "/containers/"+testContainerID+"/stop")
 		assert.False(t, stopped)
 	})
@@ -394,6 +395,35 @@ func TestUpdateContainer(t *testing.T) {
 		assert.False(t, imageRemoved, "old image must not be removed when keep-old-image label is set")
 	})
 
+	t.Run("removes the old image by default", func(t *testing.T) {
+		daemon, controller := setupUpdateScenario(t, updateScenario{
+			oldImageID: testOldImageID,
+			newImageID: testNewImageID,
+		})
+		controller.keepOldImage = true
+
+		require.NoError(t, controller.updateContainer(context.Background(), &Container{
+			ID:           testContainerID,
+			KeepOldImage: boolPtr(false),
+		}))
+
+		_, imageRemoved := daemon.findRequest(http.MethodDelete, "/images/"+testOldImageID)
+		assert.True(t, imageRemoved, "keep-old-image=false label must override controller default")
+	})
+
+	t.Run("returns error when removing the old image fails", func(t *testing.T) {
+		daemon, controller := setupUpdateScenario(t, updateScenario{
+			oldImageID: testOldImageID,
+			newImageID: testNewImageID,
+		})
+		daemon.handleJSON(http.MethodDelete, "/images/"+testOldImageID, http.StatusConflict,
+			map[string]string{"message": "image is being used by stopped container"})
+
+		err := controller.updateContainer(context.Background(), &Container{ID: testContainerID})
+
+		assert.ErrorContains(t, err, "image is being used")
+	})
+
 	t.Run("updates container whose image was not present locally", func(t *testing.T) {
 		daemon, controller := setupUpdateScenario(t, updateScenario{
 			oldImageID: "",
@@ -405,6 +435,9 @@ func TestUpdateContainer(t *testing.T) {
 		assert.NoError(t, err, "there is no old image to remove, so the update must not fail")
 		_, started := daemon.findRequest(http.MethodPost, "/containers/"+testNewContainerID+"/start")
 		assert.True(t, started)
+		for _, key := range daemon.requestKeys() {
+			assert.NotEqual(t, http.MethodDelete+" /images/", key)
+		}
 	})
 
 	t.Run("canceled context aborts update", func(t *testing.T) {
